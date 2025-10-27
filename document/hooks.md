@@ -31,3 +31,16 @@ Hook（钩子）是一种非侵入式的、事件驱动的编程机制，它允�
 *自动化助手*（post Hook 执行格式化、测试）
 *黑匣子*（记录所有操作日志用于调试）
 **它是实现自动化工作流的关键粘合剂**：通过 pre 和 post Hook，可以将Agent的多个离散动作（如：写代码 → 测试 → 提交）无缝地串联成一个端到端的自动化流水线。
+
+# 如何使用
+假设你在使用像 **Kiro IDE** 或 **Claude Code** 这类支持 AI Hooks 的工具：
+你创建一个配置文件，比如hooks.json，内容类似：
+```
+{
+  "event": "on-save",
+  "filePattern": "*.ts",
+  "action": "ai.generateDocs",
+  "target": "README.md"
+}
+```
+这表示：**“当任何 .ts 文件被保存时，调用 AI 自动生成文档，并更新到 README.md”**。
