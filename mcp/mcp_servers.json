@@ -1,0 +1,49 @@
+{
+  "servers": [
+    {
+      "id": "file_server",
+      "name": "文件操作服务器",
+      "description": "提供文件读写和目录操作功能",
+      "url": "http://localhost:3000",
+      "enabled": true,
+      "category": "file_operations",
+      "tags": ["file", "io", "storage"]
+    },
+    {
+      "id": "time_server",
+      "name": "时间服务器",
+      "description": "提供系统时间查询功能",
+      "url": "http://localhost:3001",
+      "enabled": true,
+      "category": "system",
+      "tags": ["time", "system"]
+    },
+    {
+      "id": "mysql_server",
+      "name": "MySQL数据库服务器",
+      "description": "提供MySQL数据库操作功能",
+      "url": "http://localhost:3002",
+      "enabled": true,
+      "category": "database",
+      "tags": ["mysql", "database", "sql"]
+    },
+    {
+      "id": "vocaloid_website_server",
+      "name": "Vocaloid音乐网站服务器",
+      "description": "提供Vocaloid猜歌游戏网站API访问功能（获取随机歌曲、上传歌曲、管理歌曲等）",
+      "url": "http://localhost:3003",
+      "enabled": false,
+      "category": "music",
+      "tags": ["vocaloid", "music", "api", "website"]
+    }
+  ],
+  "cache": {
+    "ttl": 3600,
+    "enabled": true
+  },
+  "discovery": {
+    "auto_refresh": true,
+    "refresh_interval": 600
+  }
+}
+

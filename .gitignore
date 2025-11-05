@@ -1,7 +1,55 @@
 # IDE 文件
+## IntelliJ IDEA / PyCharm
 .idea/
 *.iml
+*.iws
+*.ipr
+out/
+.idea_modules/
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+## VS Code
 .vscode/
+*.code-workspace
+.history/
+
+## Eclipse
+.classpath
+.project
+.settings/
+bin/
+*~.nib
+local.properties
+.loadpath
+.recommenders
+
+## Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+## Vim
+.netrwhist
+
+## Emacs
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+## Other editors
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+## Common editor temp files
 *.swp
 *.swo
 *~
@@ -17,8 +65,47 @@ hs_err_pid*
 
 # 日志文件
 *.log
+*.log.*
 logs/
 log/
+*.log.gz
+*.log.1
+*.log.2
+*.log.3
+*.log.4
+*.log.5
+*.log.6
+*.log.7
+*.log.8
+*.log.9
+*.log.10
+*.log.*.gz
+*.out
+*.err
+*.trace
+*.debug
+*.info
+*.warn
+*.error
+*.warning
+*.fatal
+*.audit
+*.access
+*.audit.log
+*.access.log
+*.error.log
+*.warning.log
+*.info.log
+*.debug.log
+*.trace.log
+*.gc.log
+*.jfr
+*.hprof
+*.dump
+crash.log
+error.log
+debug.log
+trace.log
 
 # Maven
 .mvn/
