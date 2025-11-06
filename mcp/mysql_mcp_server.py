@@ -434,63 +434,190 @@ def handle_tools_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, An
         raise ValueError(f"未知工具: {tool_name}")
 
 
+def _format_error_response(request_id: Any, error_code: int, message: str, data: str = None) -> Dict[str, Any]:
+    """
+    格式化错误响应
+    
+    Args:
+        request_id: 请求ID
+        error_code: 错误码
+        message: 错误消息
+        data: 错误详情（可选）
+    
+    Returns:
+        JSON-RPC错误响应
+    """
+    error_response = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": error_code,
+            "message": message
+        }
+    }
+    if data:
+        error_response["error"]["data"] = data
+    return error_response
+
+
 def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
     """处理JSON-RPC 2.0请求"""
+    # 验证JSON-RPC版本
+    if data.get("jsonrpc") != "2.0":
+        return _format_error_response(
+            data.get("id"),
+            -32600,
+            "Invalid Request",
+            "jsonrpc version must be 2.0"
+        )
+    
     method = data.get("method")
     request_id = data.get("id")
+    params = data.get("params", {})
     
-    if method == "tools/list":
-        result = handle_tools_list()
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result
-        }
-    
-    elif method == "tools/call":
-        params = data.get("params", {})
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-        
-        if not tool_name:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {
-                    "code": -32602,
-                    "message": "参数错误",
-                    "data": "缺少工具名称"
+    try:
+        if method == "initialize":
+            # MCP协议：initialize方法
+            result = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "MySQL数据库MCP服务器",
+                    "version": "1.0.0"
                 }
             }
-        
-        try:
-            result = handle_tools_call(tool_name, arguments)
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": result
             }
-        except Exception as e:
-            logger.error(f"❌ 工具调用失败: {str(e)}")
+        
+        elif method == "notifications/initialized":
+            # MCP协议：initialized通知（不需要响应）
+            logger.debug("收到 initialized 通知")
+            return None
+        
+        elif method == "tools/list":
+            result = handle_tools_list()
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": str(e)
+                "result": result
+            }
+        
+        elif method == "tools/call":
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+            
+            if not tool_name:
+                return _format_error_response(
+                    request_id,
+                    -32602,
+                    "Invalid params",
+                    "tools/call 方法需要 name 参数来指定要调用的工具名称"
+                )
+            
+            try:
+                result = handle_tools_call(tool_name, arguments)
+                return {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": result
                 }
-            }
+            except ImportError as e:
+                logger.error(f"❌ 依赖缺失: {str(e)}")
+                return _format_error_response(
+                    request_id,
+                    -32003,
+                    "依赖缺失",
+                    f"{str(e)}。请安装所需的MySQL客户端库。"
+                )
+            except ValueError as e:
+                error_msg = str(e)
+                logger.error(f"❌ 参数错误: {error_msg}")
+                if "缺少" in error_msg or "需要" in error_msg:
+                    return _format_error_response(
+                        request_id,
+                        -32602,
+                        "参数错误",
+                        f"{error_msg}。请检查工具调用参数是否完整。"
+                    )
+                elif "未知工具" in error_msg:
+                    return _format_error_response(
+                        request_id,
+                        -32601,
+                        "工具不存在",
+                        f"{error_msg}。请使用 tools/list 方法查看可用工具列表。"
+                    )
+                else:
+                    return _format_error_response(
+                        request_id,
+                        -32602,
+                        "参数错误",
+                        error_msg
+                    )
+            except ConnectionError as e:
+                logger.error(f"❌ 数据库连接错误: {str(e)}")
+                return _format_error_response(
+                    request_id,
+                    -32004,
+                    "数据库连接失败",
+                    f"无法连接到数据库: {str(e)}。请检查连接参数（主机、端口、用户名、密码）是否正确，以及数据库服务是否运行。"
+                )
+            except Exception as e:
+                # 检查是否是MySQL特定的错误
+                error_str = str(e)
+                if "Access denied" in error_str or "access denied" in error_str:
+                    logger.error(f"❌ 数据库认证失败: {str(e)}")
+                    return _format_error_response(
+                        request_id,
+                        -32005,
+                        "数据库认证失败",
+                        f"数据库用户名或密码错误: {str(e)}。请检查连接参数。"
+                    )
+                elif "Unknown database" in error_str or "unknown database" in error_str:
+                    logger.error(f"❌ 数据库不存在: {str(e)}")
+                    return _format_error_response(
+                        request_id,
+                        -32006,
+                        "数据库不存在",
+                        f"指定的数据库不存在: {str(e)}。请检查数据库名称是否正确。"
+                    )
+                elif "SQL syntax" in error_str.lower() or "syntax" in error_str.lower():
+                    logger.error(f"❌ SQL语法错误: {str(e)}")
+                    return _format_error_response(
+                        request_id,
+                        -32007,
+                        "SQL语法错误",
+                        f"SQL语句语法错误: {str(e)}。请检查SQL语句是否正确。"
+                    )
+                else:
+                    logger.error(f"❌ 工具调用失败: {str(e)}", exc_info=True)
+                    return _format_error_response(
+                        request_id,
+                        -32603,
+                        "Internal error",
+                        f"数据库操作失败: {str(e)}。如问题持续，请联系管理员。"
+                    )
+        
+        else:
+            return _format_error_response(
+                request_id,
+                -32601,
+                "Method not found",
+                f"未知的方法: {method}。支持的方法: initialize, notifications/initialized, tools/list, tools/call"
+            )
     
-    else:
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": -32601,
-                "message": f"未知方法: {method}"
-            }
-        }
+    except Exception as e:
+        logger.error(f"❌ 处理请求失败: {str(e)}", exc_info=True)
+        return _format_error_response(
+            request_id,
+            -32603,
+            "Internal error",
+            f"服务器内部错误: {str(e)}。如问题持续，请联系管理员。"
+        )
 
 
 @app.route('/', methods=['POST'])
@@ -512,20 +639,22 @@ def handle_request():
         
         response = handle_jsonrpc_request(data)
         
-        logger.info(f"📤 返回响应: {response.get('result', {}).get('tools', [{}])[0].get('name', '') if 'tools' in response.get('result', {}) else '工具调用'}")
-        
-        return jsonify(response)
+        if response:
+            logger.info(f"📤 返回响应: {response.get('result', {}).get('tools', [{}])[0].get('name', '') if 'tools' in response.get('result', {}) else '工具调用'}")
+            return jsonify(response)
+        else:
+            # 通知类请求（如notifications/initialized）不需要响应体
+            return jsonify({"jsonrpc": "2.0"}), 200
     
     except Exception as e:
-        logger.error(f"❌ 处理请求时出错: {str(e)}")
-        return jsonify({
-            "jsonrpc": "2.0",
-            "id": request.get_json().get("id") if request.is_json else None,
-            "error": {
-                "code": -32603,
-                "message": f"内部错误: {str(e)}"
-            }
-        }), 500
+        logger.error(f"❌ 处理请求时出错: {str(e)}", exc_info=True)
+        error_response = _format_error_response(
+            request.get_json().get("id") if request.is_json else None,
+            -32603,
+            "Internal error",
+            f"服务器处理请求时发生异常: {str(e)}"
+        )
+        return jsonify(error_response), 500
 
 
 @app.route('/health', methods=['GET'])

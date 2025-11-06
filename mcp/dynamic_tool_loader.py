@@ -40,17 +40,11 @@ class MCPToolCaller:
         self.server_manager = server_manager
     
     def call_tool(self, server_id: str, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """调用MCP服务器上的工具"""
+        """调用MCP服务器上的工具（自定义实现）"""
         import requests
         import json
         
-        tool_info = self.server_manager.get_tool(server_id, tool_name)
-        if not tool_info:
-            return f"错误: 工具 {server_id}:{tool_name} 不存在"
-        
         server = self.server_manager.servers.get(server_id)
-        if not server:
-            return f"错误: 服务器 {server_id} 不存在"
         
         payload = {
             "jsonrpc": "2.0",
@@ -63,21 +57,78 @@ class MCPToolCaller:
         }
         
         try:
+            # 获取请求头（可能包含session-id）
+            headers = {"Content-Type": "application/json"}
+            
+            if server.requires_session:
+                headers["Accept"] = "application/json, text/event-stream"
+                if server.session_id:
+                    headers["mcp-session-id"] = server.session_id
+                else:
+                    # 如果需要会话但没有session_id，尝试初始化
+                    if hasattr(self.server_manager, '_init_server_session'):
+                        self.server_manager._init_server_session(server)
+                        if server.session_id:
+                            headers["mcp-session-id"] = server.session_id
+            
+            # 对于 SSE 协议，使用返回的 endpoint URL
+            if server.type == "sse" and server.server_info and server.server_info.get('sse_endpoint'):
+                url = server.server_info['sse_endpoint']
+                if server.session_id:
+                    url = f"{url}?sessionId={server.session_id}"
+                stream = True
+            else:
+                url = server.url.rstrip('/')
+                stream = False
+            
+            logger.info(f"🔧 调用MCP工具: {url}, 工具: {tool_name}, 参数: {arguments}")
+            logger.debug(f"🔧 请求payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+            logger.debug(f"🔧 请求headers: {headers}")
+            
             response = requests.post(
-                server.url.rstrip('/'),
+                url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
+                headers=headers,
+                timeout=30,
+                stream=stream
             )
             
-            if response.status_code != 200:
-                return f"错误: HTTP {response.status_code}, 响应: {response.text[:200]}"
+            logger.info(f"🔧 MCP响应: HTTP {response.status_code}")
             
-            result_data = response.json()
+            if response.status_code != 200:
+                error_msg = f"HTTP {response.status_code}, 响应: {response.text[:200]}"
+                logger.error(f"❌ MCP服务器返回错误状态码: {error_msg}")
+                return f"错误: {error_msg}"
+            
+            try:
+                # 对于 SSE 协议，需要解析事件流
+                if server.type == "sse" and stream:
+                    result_data = None
+                    for line in response.iter_lines(decode_unicode=True):
+                        if line and line.startswith('data:'):
+                            json_str = line[5:].strip()  # 去掉 "data: " 前缀
+                            try:
+                                result_data = json.loads(json_str)
+                                break  # 找到第一个有效响应
+                            except json.JSONDecodeError:
+                                continue
+                    if result_data is None:
+                        raise Exception("SSE 响应中未找到有效的 JSON 数据")
+                else:
+                    logger.debug(f"🔧 MCP响应内容: {response.text[:500]}")
+                    result_data = response.json()
+            except json.JSONDecodeError as e:
+                error_msg = f"响应不是有效的JSON: {response.text[:200]}"
+                logger.error(f"❌ MCP服务器响应解析失败: {error_msg}")
+                return f"错误: {error_msg}"
             
             if "error" in result_data:
                 error_info = result_data["error"]
-                return f"错误: {error_info.get('message', '未知错误')}, 详情: {error_info.get('data', '')}"
+                error_msg = f"{error_info.get('message', '未知错误')}"
+                if error_info.get('data'):
+                    error_msg += f", 详情: {error_info.get('data')}"
+                logger.error(f"❌ MCP服务器返回错误: {error_msg}")
+                return f"错误: {error_msg}"
             
             result = result_data.get("result", {})
             
@@ -91,10 +142,15 @@ class MCPToolCaller:
                             # 尝试解析JSON并格式化
                             content_data = json.loads(content_text)
                             return json.dumps(content_data, ensure_ascii=False, indent=2)
-                        except:
+                        except json.JSONDecodeError:
+                            # 如果不是JSON，直接返回文本
                             return content_text
-                    # 文件操作MCP服务器返回格式
-                    return f"文件内容 ({result.get('size', 0)} 字符):\n{result['content']}"
+                    # 如果content是字符串（文件操作MCP服务器返回格式）
+                    elif isinstance(result["content"], str):
+                        return f"文件内容 ({result.get('size', 0)} 字符):\n{result['content']}"
+                    else:
+                        # content为空或其他格式
+                        return json.dumps(result, ensure_ascii=False, indent=2)
                 elif "success" in result:
                     return result.get("message", "操作成功")
                 elif "files" in result:
@@ -103,8 +159,14 @@ class MCPToolCaller:
                     file_list = "\n".join([f"- {f['name']} ({f['size']} bytes)" for f in files[:10]])
                     return f"目录: {result.get('path')}\n文件: {len(files)} 个, 目录: {len(dirs)} 个\n{file_list}"
                 else:
+                    # 其他格式，直接返回JSON
                     return json.dumps(result, ensure_ascii=False, indent=2)
+            elif result is None:
+                # result为None的情况
+                logger.warning(f"⚠️  MCP服务器返回result为None")
+                return "操作完成（无返回结果）"
             else:
+                # result不是字典，直接转换为字符串
                 return str(result)
         
         except requests.exceptions.ConnectionError:
@@ -268,3 +330,43 @@ def load_dynamic_tools(server_manager: MCPServerManager, force_refresh: bool = F
     logger.info(f"✅ 总共加载了 {len(langchain_tools)} 个动态工具")
     return langchain_tools
 
+
+def load_tools_by_retrieval(retrieval_manager, query: str, top_k: int = 3, 
+                           server_manager: MCPServerManager = None) -> List[StructuredTool]:
+    """
+    通过检索管理器按需加载工具（用于减少token使用）
+    
+    Args:
+        retrieval_manager: 工具检索管理器
+        query: 查询文本（AI的需求描述）
+        top_k: 返回最匹配的工具数量
+        server_manager: MCP服务器管理器（用于创建工具调用器）
+    
+    Returns:
+        LangChain工具列表（只包含匹配的工具）
+    """
+    if server_manager is None:
+        server_manager = retrieval_manager.server_manager
+    
+    # 搜索匹配的工具
+    matched_tools_info = retrieval_manager.search_tools(query, top_k=top_k)
+    
+    if not matched_tools_info:
+        logger.warning(f"未找到匹配的工具: {query}")
+        return []
+    
+    # 创建调用器
+    caller = MCPToolCaller(server_manager)
+    
+    # 为匹配的工具创建LangChain工具对象
+    langchain_tools = []
+    for tool_info in matched_tools_info:
+        try:
+            langchain_tool = create_dynamic_tool(tool_info, caller)
+            langchain_tools.append(langchain_tool)
+            logger.info(f"✅ 检索并加载工具: {tool_info.server_id}.{tool_info.name}")
+        except Exception as e:
+            logger.error(f"❌ 加载工具失败 {tool_info.server_id}.{tool_info.name}: {e}")
+    
+    logger.info(f"✅ 检索到 {len(langchain_tools)} 个匹配的工具")
+    return langchain_tools

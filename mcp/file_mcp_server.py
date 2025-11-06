@@ -281,6 +281,32 @@ def handle_tools_call(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, An
         raise ValueError(f"未实现的工具: {tool_name}")
 
 
+def _format_error_response(request_id: Any, error_code: int, message: str, data: str = None) -> Dict[str, Any]:
+    """
+    格式化错误响应
+    
+    Args:
+        request_id: 请求ID
+        error_code: 错误码
+        message: 错误消息
+        data: 错误详情（可选）
+    
+    Returns:
+        JSON-RPC错误响应
+    """
+    error_response = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": error_code,
+            "message": message
+        }
+    }
+    if data:
+        error_response["error"]["data"] = data
+    return error_response
+
+
 def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     处理JSON-RPC 2.0请求
@@ -293,15 +319,12 @@ def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     # 验证JSON-RPC版本
     if data.get("jsonrpc") != "2.0":
-        return {
-            "jsonrpc": "2.0",
-            "id": data.get("id"),
-            "error": {
-                "code": -32600,
-                "message": "Invalid Request",
-                "data": "jsonrpc version must be 2.0"
-            }
-        }
+        return _format_error_response(
+            data.get("id"),
+            -32600,
+            "Invalid Request",
+            "jsonrpc version must be 2.0"
+        )
     
     request_id = data.get("id")
     method = data.get("method")
@@ -309,7 +332,30 @@ def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
     
     try:
         # 处理不同的方法
-        if method == "tools/list":
+        if method == "initialize":
+            # MCP协议：initialize方法
+            result = {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {}
+                },
+                "serverInfo": {
+                    "name": "文件操作MCP服务器",
+                    "version": "1.0.0"
+                }
+            }
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": result
+            }
+        
+        elif method == "notifications/initialized":
+            # MCP协议：initialized通知（不需要响应）
+            logger.debug("收到 initialized 通知")
+            return None
+        
+        elif method == "tools/list":
             result = handle_tools_list()
             return {
                 "jsonrpc": "2.0",
@@ -322,7 +368,12 @@ def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
             tool_arguments = params.get("arguments", {})
             
             if not tool_name:
-                raise ValueError("tools/call 需要 name 参数")
+                return _format_error_response(
+                    request_id,
+                    -32602,
+                    "Invalid params",
+                    "tools/call 方法需要 name 参数来指定要调用的工具名称"
+                )
             
             result = handle_tools_call(tool_name, tool_arguments)
             return {
@@ -332,19 +383,74 @@ def handle_jsonrpc_request(data: Dict[str, Any]) -> Dict[str, Any]:
             }
         
         else:
-            raise ValueError(f"未知的方法: {method}")
+            return _format_error_response(
+                request_id,
+                -32601,
+                "Method not found",
+                f"未知的方法: {method}。支持的方法: initialize, notifications/initialized, tools/list, tools/call"
+            )
+    
+    except FileNotFoundError as e:
+        logger.error(f"❌ 文件不存在: {str(e)}")
+        return _format_error_response(
+            request_id,
+            -32602,
+            "文件不存在",
+            f"指定的文件或目录不存在: {str(e)}。请检查文件路径是否正确。"
+        )
+    
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(f"❌ 参数错误: {error_msg}")
+        # 根据错误消息判断是参数缺失还是其他值错误
+        if "需要" in error_msg or "缺少" in error_msg or "参数" in error_msg:
+            return _format_error_response(
+                request_id,
+                -32602,
+                "参数错误",
+                f"{error_msg}。请检查工具调用参数是否完整。"
+            )
+        elif "未知的工具" in error_msg or "未实现的工具" in error_msg:
+            return _format_error_response(
+                request_id,
+                -32601,
+                "工具不存在",
+                f"{error_msg}。请使用 tools/list 方法查看可用工具列表。"
+            )
+        else:
+            return _format_error_response(
+                request_id,
+                -32602,
+                "参数错误",
+                error_msg
+            )
+    
+    except PermissionError as e:
+        logger.error(f"❌ 权限错误: {str(e)}")
+        return _format_error_response(
+            request_id,
+            -32001,
+            "权限不足",
+            f"无权执行此操作: {str(e)}。请检查文件权限或配置的允许访问目录。"
+        )
+    
+    except OSError as e:
+        logger.error(f"❌ 系统错误: {str(e)}")
+        return _format_error_response(
+            request_id,
+            -32002,
+            "系统错误",
+            f"文件系统操作失败: {str(e)}。请检查磁盘空间和文件系统状态。"
+        )
     
     except Exception as e:
-        logger.error(f"❌ 处理请求失败: {str(e)}")
-        return {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "error": {
-                "code": -32603,
-                "message": "Internal error",
-                "data": str(e)
-            }
-        }
+        logger.error(f"❌ 处理请求失败: {str(e)}", exc_info=True)
+        return _format_error_response(
+            request_id,
+            -32603,
+            "Internal error",
+            f"服务器内部错误: {str(e)}。如问题持续，请联系管理员。"
+        )
 
 
 @app.route('/', methods=['POST'])
@@ -377,16 +483,14 @@ def handle_request():
         return jsonify(response)
     
     except Exception as e:
-        logger.error(f"❌ 处理请求时发生异常: {str(e)}")
-        return jsonify({
-            "jsonrpc": "2.0",
-            "id": None,
-            "error": {
-                "code": -32603,
-                "message": "Internal error",
-                "data": str(e)
-            }
-        }), 500
+        logger.error(f"❌ 处理请求时发生异常: {str(e)}", exc_info=True)
+        error_response = _format_error_response(
+            None,
+            -32603,
+            "Internal error",
+            f"服务器处理请求时发生异常: {str(e)}"
+        )
+        return jsonify(error_response), 500
 
 
 @app.route('/health', methods=['GET'])

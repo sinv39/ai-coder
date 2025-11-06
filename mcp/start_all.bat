@@ -33,9 +33,14 @@ echo 🚀 启动MySQL数据库服务器 (端口 3002)...
 start "MCP - MySQL服务器 (3002)" cmd /k "cd /d %~dp0 && python mysql_mcp_server.py"
 timeout /t 2 /nobreak >nul
 
-REM 可选：启动Vocaloid网站服务器 (端口 3003) - 配置中默认禁用
-REM echo 🚀 启动Vocaloid网站服务器 (端口 3003)...
-REM start "MCP - Vocaloid服务器 (3003)" cmd /k "cd /d %~dp0 && python vocaloid_website_mcp_server.py"
+REM 启动MongoDB MCP服务器 (端口 3003)
+echo 🚀 启动MongoDB MCP服务器 (端口 3003)...
+start "MCP - MongoDB服务器 (3003)" cmd /k "cd /d %~dp0 && python mongo_db_mcp_server.py"
+timeout /t 2 /nobreak >nul
+
+REM 可选：启动Vocaloid网站服务器 (端口 3004) - 配置中默认禁用
+REM echo 🚀 启动Vocaloid网站服务器 (端口 3004)...
+REM start "MCP - Vocaloid服务器 (3004)" cmd /k "cd /d %~dp0 && python vocaloid_website_mcp_server.py"
 REM timeout /t 2 /nobreak >nul
 
 echo.
