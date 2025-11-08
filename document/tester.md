@@ -1,232 +1,273 @@
-# 调试器（Debugger）
+# DeepCodeDebugger
+**工程级、范围受限、容器化自动修复子 Agent**
 
-具备自动化调试与修复能力的工程级系统组件，能够根据测试用例、功能描述或错误现象，在真实工程项目上下文中自动定位缺陷、递归分析调用链，并安全地生成、验证和返回多文件协同修复方案。仅当修复成功时返回修改后的代码；若无法修复，则返回结构化诊断信息，支持人机协同决策。
+## 概述
 
----
+调试器是一个专为 **Code Generator 调用** 设计的子 Agent，用于在真实工程项目中自动定位缺陷、生成安全修复方案并验证其正确性。它通过 **会话 ID 管理** 实现状态跟踪，借助 **AST 调用分析** 严格限定修改范围上界，并在 **语言定制的 Docker 容器** 中执行 **分析 → 规划 → Patch 生成 → 验证** 的四阶段流程。所有输出严格遵循 **OpenAI Function Calling JSON Schema**，不写入文件、不直连用户，仅返回结构化结果供 Code Generator 决策。
 
-## 设计原则
+## 核心能力 
 
-- **工程感知**：深度理解项目结构、依赖、构建与测试配置。
-- **安全修复**：源码只读保护，修复在隔离副本中验证，支持影响分析。
-- **递归协同**：支持跨文件调用链追踪与多文件协同修复。
-- **高效复用**：一个工程一个调试容器，依赖仅安装一次。
-- **人机协同**：提供候选修复、半自动模式与可审计轨迹。
+| 能力 | 说明 |
+|------|------|
+| **会话 ID 管理** | 每次请求分配唯一 `session_id`，用于日志、状态与容器复用 |
+| **三重范围上界推导** | **AST 调用图**（静态可达性） + **Agent 缺陷理解**（动态上下文） + **`allowed_paths`**（路径白名单） → 精准闭包 |
+| **四阶段流程** | `分析 → 规划 → Patch → 验证`，阶段失败即终止 |
+| **容器化执行** | 每工程绑定长期容器，语言定制运行时，写时复制工作区 |
+| **主 Agent 协作** | 接收 `change_description`，返回 JSON；由主 Agent 负责交互与写入 |
+| **OpenAI Function Calling** | 请求/响应严格符合 schema |
 
-> **注**：版本管理（如补丁快照、回滚、Git 集成）由外部系统负责，本组件不实现。
+## 与 Code Generator 的协作
 
----
+| 角色 | 职责                                                                                                     |
+|------|--------------------------------------------------------------------------------------------------------|
+| **Code Generator** | - 生成代码后或接收用户指令<br>- 调用 Debugger（Function Calling）<br>- 解析返回结果<br>- 向用户展示候选方案<br>- 用户确认后写入文件            |
+| **Debugger** | - 接收调用，分配 `session_id`<br>- 执行四阶段流程<br>- 返回 JSON（fixed / candidates / unfixable）<br>- **永不写文件、永不直连用户** |
 
-## 总体架构
+> **协议**：Debugger 是 Code Generator 的“可信验证与修复引擎”。
 
+```mermaid
+graph TD
+    subgraph Code Generator
+        A[1. 接收用户指令或生成代码后] --> B{2. 准备调用参数};
+        B --> C[3. Function Calling 调用 Debugger];
+        C -- project_root, change_description, ... --> D;
+        F --> G{6. 解析 Debugger 响应};
+        G -- status: 'fixed' --> H[7a. 用户确认后，将修复写入文件];
+        G -- status: 'candidates' --> I[7b. 向用户展示多个候选方案];
+        G -- status: 'unfixable' --> J[7c. 告知用户无法自动修复及原因];
+    end
+
+    subgraph Debugger
+        D[4. 接收请求，启动四阶段流程];
+        D --> E((执行<br>分析→规划→Patch→验证));
+        E --> F[5. 返回结构化 JSON 结果];
+    end
+
+    style D fill:#f9f,stroke:#333,stroke-width:2px
+    style E fill:#ccf,stroke:#333,stroke-width:2px
 ```
-Interface
-   ↓
-Project-Scoped Debugger Container (长期运行，工程绑定)
-   ├── 只读挂载：/project-ro ← project_root
-   ├── 可写副本：/project-ws ← .debugger/workspace/project/
-   └── Debugger Backend
-          ├── 入口定位器
-          ├── 行为解析器（测试/功能描述）
-          ├── 递归分析引擎（调用图 + 符号追踪）
-          ├── 多文件修复生成器
-          ├── 安全验证器（类型检查/影响分析）
-          └── 结果决策器
+
+## API参数（OpenAI Function Calling）
+
+| 字段名 | 类型 | 必填 | 说明                                               |
+|--------|------|:---:|--------------------------------------------------|
+| **project_root** | `string` | ✅ | 项目根目录绝对路径（如 `/workspace/my-app`）                 |
+| **change_description** | `string` | ⭕ | **主 Agent 提供的本次修改说明**（如“为除法增加零值保护”），用于意图对齐与上下文补充 |
+| **test_cases** | `array<object>` | ⭕ | 显式测试用例（输入/输出对）                                   |
+| &nbsp;&nbsp;├─ `input` | `array` | - | 测试输入参数                                           |
+| &nbsp;&nbsp;└─ `output` | `any` | - | 期望输出                                             |
+| **functionality** | `string` | ⭕ | 功能自然语言描述（如“应能安全处理空列表”）                           |
+| **error_log** | `string` | ⭕ | 运行时错误日志或异常堆栈                                     |
+| **entry_point** | `string` | ❌ | 入口文件路径（自动推断优先）                                   |
+| **language** | `string` | ❌ | 编程语言及版本（自动检测优先）                                  |
+| **prompt_hint** | `string` | ❌ | 修复策略提示（如“保持向后兼容”）                                |
+| **timeout** | `integer` | ❌ | 超时时间（秒），默认 `60`                                  |
+| **human_in_the_loop** | `boolean` | ❌ | 是否返回候选方案供主 Agent 决策，默认 `true`                    |
+| **conversation_id** | `string` | ❌ | 对话 ID，用于上下文管理                                    |                                    |
+
+**约束条件**：
+- `project_root` 必填；
+- 至少提供以下之一：`test_cases`、`functionality`、`error_log`；
+- `change_description` 虽非必填，但**强烈建议主 Agent 提供**，以提升缺陷定位准确率。
+
+## 容器与执行环境
+
+### 容器生命周期
+
+- **绑定粒度**：每个 `project_root` 路径绑定一个专属容器。
+- **创建时机**：首次调试请求时按语言自动选择镜像创建。
+- **持久化标识**：容器 ID 与会话元数据存于 `project_root/.debugger/`。
+- **复用策略**：后续请求复用同一容器，避免重复初始化。
+
+### 写时复制（Copy-on-Write）工作区
+
+| 宿主机路径 | 容器路径 | 权限 | 用途 |
+|-----------|---------|------|------|
+| `project_root` | `/project-ro` | **只读** | 原始源码，永不修改 |
+| `project_root/.debugger/workspace/` | `/project-ws` | **可写** | 修复验证工作区 |
+
+- `/project-ro`：源码只读挂载，防止误改。
+- `/project-ws`：CoW 机制创建的轻量副本，所有修改仅在此生效，通过OverlayFS覆盖`/project-ro`，达到修改源文件的效果。
+
+### 语言运行时定制
+
+| 项目特征文件 | 容器镜像 | 预装工具 |
+|-------------|--------|--------|
+| `pyproject.toml` | `pyrite/debugger:python-3.11` | Python, poetry, mypy, pytest |
+| `package.json` | `pyrite/debugger:node-20` | Node.js, npm, tsc, Jest |
+| `go.mod` | `pyrite/debugger:go-1.22` | Go, go vet, go test |
+| `Cargo.toml` | `pyrite/debugger:rust-1.78` | Rust, cargo, clippy |
+| 无识别文件 | `pyrite/debugger:base` | bash, git, diff, build-essential |
+
+支持通过 `.debugger/config.yaml` 覆盖运行时。
+
+## 修改范围上界推导机制
+
+为避免漏掉关键修复文件，范围上界由以下三者交联合成：
+
+| 来源 | 作用 | 示例 |
+|------|------|------|
+| **1. AST 调用图** | 静态分析函数/方法调用关系，构建缺陷点的**可达代码单元集合** | `api/handler.py` → `core/math.py` → `utils/safe.py` |
+| **2. Agent 缺陷理解** | 动态解析 `test_cases`/`error_log`/`change_description`，补充**隐式依赖或测试桩文件** | 测试文件 `tests/test_math.py` 虽未被调用，但对验证至关重要 |
+| **3. allowed_paths** | 从配置中读取路径白名单，**裁剪前两者结果**，排除 `legacy/`、`vendor/` 等区域 | 仅保留 `src/` 和 `tests/` 下的文件 |
+
+> **最终范围上界 = (AST 可达 ∪ Agent 推断) ∩ allowed_paths**  
+> 此闭包一经确定，**所有修复（含递归）必须严格限制其中**。
+
+## 调试流程：四阶段（Analysis → Plan → Patch → Validate）
+
+### 阶段 1：分析（Analysis）
+- 输入：`test_cases` / `functionality` / `error_log`
+- 动作：
+    - 在 `/project-ws` 中运行测试或解析错误
+    - 定位初始缺陷点（文件 + 函数/行号）
+    - 构建项目级 AST 调用图
+- 输出：缺陷上下文 + 调用链
+
+### 阶段 2：规划（Plan）
+- 动作：
+    - 修改范围上界推导
+    - 修复方案规划
+- 若范围为空或根源在范围外 → 返回 `unfixable`
+- 输出：`repairable_scope: string[]`
+
+### 阶段 3：Patch 生成（Patch）
+- 动作：
+    - 根据修复方案生成补丁
+    - 仅在 `repairable_scope` 内生成一个或多个 Patch 候选
+    - 每个 Patch 为标准 unified diff
+- 输出：`patch_set[]` 或 `candidates[]`
+
+### 阶段 4：验证（Validate）
+- 动作：
+    - 应用 Patch 到 `/project-ws`
+    - 执行：
+        - 语法检查（如 `python -m py_compile`）
+        - 类型检查（如 `mypy`，若启用）
+        - 所有 `test_cases`或自动推导测试
+    - 影响分析：仅检查范围内的调用者兼容性
+    - 不成功则调整修复方案，根据配置决定是否重试 Patch 生成
+- 输出：`validation_summary`
+
+> 验证不通过则再次尝试 Patch 生成，直至达到最大尝试次数，仍失败则返回 `unfixable`。
+
+```mermaid
+graph TD
+    Start((开始)) --> A[阶段 1: 分析 Analysis];
+    A -- 缺陷上下文, 调用链 --> B[阶段 2: 规划 Plan];
+    B --> B1{推导修改范围上界};
+    B1 -- 范围有效 --> B2[规划修复策略];
+    B1 -- 范围为空或根源在范围外 --> End_Unfixable["❌ 返回 unfixable"];
+    B2 -- 修复方案 --> C[阶段 3: Patch 生成];
+    C -- 生成一个或多个 Patch 候选 --> D{阶段 4: 验证 Validate};
+    
+    subgraph Validation Loop
+        D --> D1[应用 Patch 到 /project-ws];
+        D1 --> D2{语法/类型/测试/影响分析};
+        D2 -- 全部通过 --> End_Fixed["✅ 返回 fixed/candidates"];
+        D2 -- 验证失败 --> D3{达到最大尝试次数?};
+        D3 -- 否 --> C;
+        D3 -- 是 --> End_Unfixable;
+    end
+
+    style C fill:#f9f,stroke:#333,stroke-width:2px
 ```
 
----
+## 响应格式（JSON）
 
-## 接口定义（RESTful API）
-
-### 请求参数
-
-| 字段 | 类型 | 必需 | 说明 |
-|------|------|------|------|
-| `project_root` | string | ✅ | 工程绝对路径（如 `/workspace/my-app`） |
-| `test_cases` | array | ⚠️ | 显式测试用例（输入/输出对） |
-| `functionality` | string | ⚠️ | 自然语言功能描述（如 “返回两数之和”） |
-| `entry_point` | string | ❌ | 调试入口文件（未提供则自动推断） |
-| `code_snippet` | string | ❌ | 引导性代码片段（用于定位） |
-| `language` | string | ❌ | 语言及版本（自动推断优先） |
-| `timeout` | integer | ❌ | 超时（秒，默认 60） |
-| `enable_recursive_fix` | boolean | ❌ | 启用递归跨文件修复（默认 `true`） |
-
-> `test_cases` 与 `functionality` 至少提供其一。
-
-### 响应策略
-
-- **修复成功**：仅返回修复结果（无调试细节）。
-- **修复失败**：返回完整诊断，含递归路径、生成测试、建议修复。
-- **多方案场景**：返回候选修复列表（当启用人机协同模式）。
-
----
-
-## 工程级执行环境
-
-### 容器与目录结构
-
-- **容器生命周期**：每个 `project_root` 绑定一个长期运行的专属容器。
-- **挂载策略**：
-    - `project_root` → 容器内 `/project-ro`（**只读**）
-    - `project_root/.debugger/workspace/` → 容器内 `/project-ws`（**可写**）
-- **目录示例**：
-  ```
-  /workspace/my-app/
-  ├── src/
-  ├── pyproject.toml
-  └── .debugger/
-      ├── config.yaml          # 调试策略配置
-      ├── container.id
-      └── workspace/
-          ├── project/         # 可写工程副本（用于修复验证）
-          └── symbol_index/    # 调用图与符号缓存（可选）
-  ```
-
-### 依赖与构建
-
-- 首次调试时，根据工程类型自动执行标准构建命令：
-    - Python (Poetry): `poetry install --no-root`
-    - Node.js: `npm ci`
-    - Go: `go mod download && go build ./...`
-- 后续调试复用已安装依赖，仅当依赖文件变更时更新。
-
----
-
-## 核心能力详解
-
-### 1. 递归跨文件修复
-
-- **调用链追踪**：从测试失败点出发，静态分析（AST/import） + 动态 trace（可选）构建调用图。
-- **多文件补丁集**：生成涉及多个文件的协同修复方案。
-- **整体验证**：在 `/project-ws` 中应用全部补丁后运行完整测试。
-
-### 2. 工程元信息感知
-
-- 自动识别：
-    - 语言版本（`.nvmrc`, `go.mod`, `pyproject.toml`）
-    - 测试框架（`pytest`, `jest`, `go test`）
-    - 构建工具（Poetry, npm, Make）
-- 复用工程原生命令，确保环境一致性。
-
-### 3. 修复安全与影响分析
-
-- **影响扫描**：若修改公共函数，静态分析所有调用者。
-- **契约检查**：修复后运行类型检查（`mypy`, `tsc`, `go vet`）。
-- **高风险操作拦截**：
-    - 禁止引入新外部依赖（默认）
-    - 禁止修改 API 签名（如删除函数参数）
-
-### 4. 人机协同修复
-
-- **候选修复列表**：当存在多个合理方案时，返回带风险评级的选项。
-- **交互式选择 API**：支持人工选择后验证。
-- **配置控制**：通过 `.debugger/config.yaml` 启用“总是返回候选”模式。
-
-### 5. 安全与范围控制
-
-- **路径白/黑名单**：通过配置限制可修复文件范围。
-- **敏感内容过滤**：拒绝处理含密钥、token 的文件。
-- **资源隔离**：无网络、只读源码、配额限制。
-
----
-
-## 输出示例
-
-### 成功（多文件修复）
+### 成功修复（`status: "fixed"`）
 
 ```json
 {
+  "session_id": "dbg_20251108_a1b2c3",
   "status": "fixed",
+  "repairable_scope": ["src/core/math.py", "src/api/v1.py"],
   "fixed_files": {
-    "src/math.py": "def add(a, b):\n    return a + b",
-    "src/utils.py": "def safe_div(x, y):\n    if y == 0: return None\n    return x / y"
+    "src/core/math.py": "def divide(a, b):\n    if b == 0: return None\n    return a / b"
   },
   "patch_set": [
-    { "file": "src/math.py", "patch": "@@ -1 +1 @@\n-def add(a, b): return a - b\n+def add(a, b): return a + b" },
-    { "file": "src/utils.py", "patch": "@@ -2 +2,3 @@\n-def safe_div(x, y):\n-    return x / y\n+def safe_div(x, y):\n+    if y == 0: return None\n+    return x / y" }
-  ]
+    {
+      "file": "src/core/math.py",
+      "patch": "@@ -1,3 +1,4 @@\n def divide(a, b):\n-    return a / b\n+    if b == 0: return None\n+    return a / b"
+    }
+  ],
+  "validation_summary": {
+    "syntax_check": "passed",
+    "type_check": "passed",
+    "tests_passed": 3,
+    "tests_total": 3,
+    "impact_analysis": "compatible within repairable scope"
+  }
 }
 ```
 
-### 失败（含递归诊断）
+### 候选方案（`status: "candidates"`）
 
 ```json
 {
-  "status": "unfixable",
-  "diagnosis": "Error originates in utils/math.py:first_nonzero, not in entry point.",
-  "call_path": ["api/cart.py → services/pricing.py → utils/math.py"],
-  "generated_test_cases": [{ "input": [], "output": null }],
-  "error_trace": "IndexError: list index out of range",
-  "suggested_fixes": [
-    "Add empty list check in utils/math.py:first_nonzero"
-  ]
-}
-```
-
-### 候选修复（人机协同模式）
-
-```json
-{
+  "session_id": "dbg_20251108_x9y8z7",
   "status": "candidates",
+  "repairable_scope": ["src/utils.py"],
   "candidates": [
     {
-      "id": "fix-1",
-      "description": "Return 0 for empty input",
+      "id": "fix-null",
+      "description": "Return None on division by zero",
       "risk": "low",
-      "files": { "src/utils.py": "..." }
-    },
-    {
-      "id": "fix-2",
-      "description": "Raise ValueError on empty input",
-      "risk": "high",
-      "files": { "src/utils.py": "..." }
+      "files": { "src/utils.py": "..." },
+      "patch_set": [ ... ]
     }
-  ]
+  ],
+  "diagnosis": "Missing zero check in safe_div"
 }
 ```
 
----
+### 无法修复（`status: "unfixable"`）
 
-## 配置文件：`.debugger/config.yaml`（可选）
+```json
+{
+  "session_id": "dbg_20251108_err404",
+  "status": "unfixable",
+  "repairable_scope": ["src/"],
+  "diagnosis": "Root cause in vendor/lib/external.py (outside allowed_paths)",
+  "suggested_action": "Provide mock in test or exclude from validation"
+}
+```
+
+
+## 配置文件（`.debugger/config.yaml`）
 
 ```yaml
-# 工程调试策略
-language: python3.11
-project_type: poetry
+# 容器运行时
+container:
+  runtime: "auto"  # e.g., "python-3.12"
 
-entry_resolution:
-  strategy: auto
-  test_patterns: ["tests/**/test_*.py"]
-
+# 修复范围
 recursive_fix:
   enabled: true
-  max_depth: 6
   allowed_paths: ["src/", "lib/"]
-  denied_paths: ["legacy/", "secrets/"]
+  denied_paths: ["legacy/", "vendor/", "secrets/"]
 
-build:
-  cmd: "poetry install --no-root"
+# 验证策略
+validation:
+  run_type_check: true
+  impact_analysis_scope: "in_range_only"
+  timeout: 60
+  max_patch_attempts: 3
 
-test:
-  framework: pytest
-  enable_type_check: true
-
+# 安全
 safety:
   allow_new_imports: false
   enable_impact_analysis: true
-
-human_in_the_loop:
-  prefer_candidates: false
 ```
-
----
 
 ## 优势总结
 
 | 维度 | 能力 | 价值 |
 |------|------|------|
-| **准确性** | 工程元感知 + 递归分析 | 修得对，不治标 |
-| **安全性** | 影响分析 + 范围控制 | 修得稳，无副作用 |
-| **灵活性** | 候选修复 + 半自动 | 修得准，适配业务 |
-| **效率** | 依赖缓存 + 增量索引 | 修得快，低开销 |
+| **可追踪** | 会话 ID 全链路追踪 | 调试过程可审计、可复现 |
+| **精准修复** | AST + 路径白名单限定范围 | 不越权、不污染、不误改 |
+| **工程可信** | 原生工具链 + 容器环境 | 修复即生产可用 |
+| **高效复用** | 工程绑定容器 + 依赖缓存 | 首次完整，后续极速 |
+| **标准集成** | OpenAI Function Calling 兼容 | 无缝嵌入 LLM Agent 工作流 |
 
-> 该调试器专为 **Code Agent 在复杂工程项目中实现端到端自动化修复** 而设计，是连接“错误现象”与“可靠修复”的智能工程桥梁。版本管理、补丁持久化与回滚等能力由外部系统统一处理，本组件聚焦于**安全、准确、高效的修复生成与验证**。
+> **Debugger 是 Code Agent 自动化闭环中的“安全修复执行器”** —— 有边界、可验证、可审计、可集成。
