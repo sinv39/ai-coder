@@ -1,0 +1,104 @@
+flowchart TB
+    subgraph Agents[Agent层]
+        direction LR
+        Orch[Orchestrator Agent]
+        Res[Research Agent]
+        Des[Design Agent]
+        Code[Code Agent]
+    end
+    
+    subgraph MCPClient[MCP Client层]
+        direction TB
+        Client[MCP Client]
+        Client --> Discovery[工具发现服务]
+        Client --> Auth[认证授权管理]
+        Client --> Router[请求路由器]
+        Client --> Cache[结果缓存]
+    end
+    
+    subgraph MCPServers[MCP Server集群]
+        direction TB
+        
+        subgraph DocGroup[文档处理]
+            DocServer[Document Parser<br/>MCP Server]
+            DocServer --> PDF[pdf_parse]
+            DocServer --> DOCX[docx_parse]
+            DocServer --> PPT[pptx_parse]
+            DocServer --> OCR[image_ocr]
+        end
+        
+        subgraph SearchGroup[Web搜索]
+            SearchServer[Web Search<br/>MCP Server]
+            SearchServer --> GoogleAPI[google_search]
+            SearchServer --> ArXivAPI[arxiv_search]
+            SearchServer --> GitHubAPI[github_search]
+            SearchServer --> SOApi[stackoverflow_search]
+            SearchServer --> Scraper[web_scrape]
+        end
+        
+        subgraph CodeGroup[代码处理]
+            ExecServer[Code Execution<br/>MCP Server]
+            ExecServer --> PyExec[python_exec]
+            ExecServer --> BashExec[bash_exec]
+            ExecServer --> DockerRun[docker_run]
+            ExecServer --> TestRunner[test_runner]
+            
+            AnalysisServer[Code Analysis<br/>MCP Server]
+            AnalysisServer --> ASTParser[ast_parse]
+            AnalysisServer --> Linter[lint_check]
+            AnalysisServer --> TypeCheck[type_check]
+            AnalysisServer --> Complexity[complexity_analysis]
+        end
+        
+        subgraph RepoGroup[仓库管理]
+            RepoServer[Repo Management<br/>MCP Server]
+            RepoServer --> GitOps[Git操作]
+            RepoServer --> FileOps[文件操作]
+            RepoServer --> Template[模板应用]
+        end
+    end
+    
+    subgraph External[外部服务]
+        direction LR
+        GoogleExt[Google API]
+        ArXivExt[arXiv API]
+        GitHubExt[GitHub API]
+        StackExt[Stack Overflow API]
+        Docker[Docker容器]
+        GitRepo[Git仓库]
+    end
+    
+    %% 连接关系
+    Orch -.A2A.-> Res
+    Res -.A2A.-> Des
+    Des -.A2A.-> Code
+    
+    Orch --> Client
+    Res --> Client
+    Des --> Client
+    Code --> Client
+    
+    Client --> DocServer
+    Client --> SearchServer
+    Client --> ExecServer
+    Client --> AnalysisServer
+    Client --> RepoServer
+    
+    SearchServer --> GoogleExt
+    SearchServer --> ArXivExt
+    SearchServer --> GitHubExt
+    SearchServer --> StackExt
+    
+    ExecServer --> Docker
+    RepoServer --> GitRepo
+    
+    %% 样式
+    classDef agentStyle fill:#C305C3,stroke:#0c5460,stroke-width:2px
+    classDef clientStyle fill:#C30508,stroke:#856404,stroke-width:2px
+    classDef serverStyle fill:#0831C3,stroke:#155724,stroke-width:2px
+    classDef externalStyle fill:#04C392,stroke:#721c24,stroke-width:2px
+    
+    class Orch,Res,Des,Code agentStyle
+    class Client,Discovery,Auth,Router,Cache clientStyle
+    class DocServer,SearchServer,ExecServer,AnalysisServer,RepoServer serverStyle
+    class GoogleExt,ArXivExt,GitHubExt,StackExt,Docker,GitRepo externalStyle

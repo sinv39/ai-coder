@@ -1,0 +1,55 @@
+flowchart TD
+    Start([用户提交任务 + 技术文档]) --> Parse[Orchestrator Agent<br/>任务解析与理解]
+    Parse --> DocParse[MCP Document Parser<br/>提取文本/图表/架构图]
+    DocParse --> Plan[Planner<br/>生成任务计划]
+    
+    Plan --> Research[Research Agent<br/>深度研究阶段]
+    Research --> WebSearch[WebSearch Agent<br/>多源搜索]
+    WebSearch --> RAG[多模态RAG<br/>知识检索]
+    RAG --> ResearchReport[生成研究报告]
+    
+    ResearchReport --> |A2A Result Sharing| Design[Design Agent<br/>架构设计阶段]
+    Design --> ArchDesign[设计系统架构<br/>模块划分/技术栈]
+    ArchDesign --> Diagram[生成架构图<br/>Mermaid格式]
+    Diagram --> Review{Human-in-the-loop<br/>用户审核}
+    
+    Review --> |需要修改| Design
+    Review --> |通过| Code[Code Agent<br/>代码生成阶段]
+    
+    Code --> |A2A Coordination| RepoInit[MCP Repo Management<br/>创建项目结构]
+    RepoInit --> GenCode[逐模块生成代码<br/>utils/core/api/ui]
+    GenCode --> GenConfig[生成配置文件<br/>package.json/Dockerfile]
+    
+    GenConfig --> Test[测试与调试阶段]
+    Test --> RunTest[MCP Code Execution<br/>运行测试]
+    RunTest --> CheckError{是否有错误?}
+    
+    CheckError --> |是| Reflect[Reflection Engine<br/>错误分析]
+    Reflect --> BugFix[自动修复Bug]
+    BugFix --> IterCheck{迭代次数<5?}
+    IterCheck --> |是| RunTest
+    IterCheck --> |否| HumanHelp[A2A请求人工介入]
+    HumanHelp --> RunTest
+    
+    CheckError --> |否| Optimize[代码优化与文档]
+    Optimize --> CodeReview[MCP Code Analysis<br/>代码审查]
+    CodeReview --> Refactor[重构优化]
+    Refactor --> GenDoc[生成文档<br/>README/API文档]
+    
+    GenDoc --> Final[Orchestrator Agent<br/>整合输出]
+    Final --> Summary[生成项目总结报告]
+    Summary --> Delivery([交付给用户])
+    Delivery --> Feedback{用户反馈?}
+    Feedback --> |需要改进| Code
+    Feedback --> |完成| End([任务完成])
+    
+    style Start fill:#372EC3
+    style End fill:#39C5BB
+    style Research fill:#C32296
+    style Design fill:#15C341
+    style Code fill:#5563C3
+    style Test fill:#180DC3
+    style Optimize fill:#C30E48
+    style Review fill:#C35411
+    style CheckError fill:#0FC2C3
+    style Feedback fill:#0CC30B

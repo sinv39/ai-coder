@@ -1,0 +1,67 @@
+flowchart TD
+    Start([Research Agent<br/>发送搜索请求]) --> Receive[WebSearch Agent<br/>接收搜索任务]
+    Receive --> Parse[解析请求<br/>关键词/范围/数量]
+    
+    Parse --> Optimize[Query优化]
+    Optimize --> Expand[LLM Query扩展<br/>生成相关查询词]
+    Expand --> Rewrite[Query重写<br/>纠错/同义词]
+    Rewrite --> Decompose[Query分解<br/>复杂查询拆分]
+    
+    Decompose --> ParallelSearch[多源并行搜索]
+    
+    ParallelSearch --> Google[MCP Web Search<br/>Google搜索]
+    ParallelSearch --> ArXiv[MCP Web Search<br/>arXiv学术搜索]
+    ParallelSearch --> GitHub[MCP Web Search<br/>GitHub代码搜索]
+    ParallelSearch --> SO[MCP Web Search<br/>Stack Overflow搜索]
+    
+    Google --> Merge1[汇总结果]
+    ArXiv --> Merge1
+    GitHub --> Merge1
+    SO --> Merge1
+    
+    Merge1 --> Scrape[结果抓取与解析]
+    Scrape --> WebScrape[MCP web_scrape<br/>抓取网页内容]
+    WebScrape --> HTMLParse[BeautifulSoup/Playwright<br/>解析HTML]
+    HTMLParse --> Extract[提取内容<br/>标题/正文/代码/图片]
+    
+    Extract --> Quality[内容质量评估]
+    Quality --> Relevance[LLM评分<br/>相关性 0-1]
+    Quality --> Authority[LLM评分<br/>权威性 0-1]
+    Quality --> Freshness[LLM评分<br/>时效性 0-1]
+    
+    Relevance --> CalcScore[综合评分计算<br/>0.5×相关+0.3×权威+0.2×时效]
+    Authority --> CalcScore
+    Freshness --> CalcScore
+    
+    CalcScore --> Dedup[结果去重与排序]
+    Dedup --> SimHash[SimHash<br/>近重复检测]
+    SimHash --> Sort[按评分降序排列]
+    Sort --> TopK[保留Top-K结果]
+    
+    TopK --> Store[结果存储]
+    Store --> Memory[存入Memory Manager<br/>长期记忆]
+    Store --> Summary[生成结构化摘要<br/>JSON格式]
+    
+    Summary --> Return[A2A返回结果<br/>给Research Agent]
+    Return --> Check{结果是否充分?}
+    
+    Check --> |是| End([搜索完成])
+    Check --> |否| IterCheck{迭代次数<3?}
+    IterCheck --> |是| AdjustStrategy[调整搜索策略<br/>更换关键词/扩大范围]
+    AdjustStrategy --> ParallelSearch
+    IterCheck --> |否| PartialReturn[返回部分结果<br/>标记为不完整]
+    PartialReturn --> End
+    
+    style Start fill:#0CC30B
+    style End fill:#0CC30B
+    style Optimize fill:#C305C3
+    style ParallelSearch fill:#C30713
+    style Quality fill:#7BC32C
+    style Store fill:#2B05C3
+    style Check fill:#C305C3
+    style IterCheck fill:#C305C3
+    
+    style Google fill:#39C5BB
+    style ArXiv fill:#39C5BB
+    style GitHub fill:#39C5BB
+    style SO fill:#39C5BB

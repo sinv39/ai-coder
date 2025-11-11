@@ -1,0 +1,77 @@
+sequenceDiagram
+    participant User as 用户
+    participant Orch as Orchestrator Agent
+    participant Res as Research Agent
+    participant Web as WebSearch Agent
+    participant Des as Design Agent
+    participant Code as Code Agent
+    participant Ref as Reflection Engine
+    participant MCP as MCP Servers
+
+    User->>Orch: 提交任务+技术文档
+    activate Orch
+    Orch->>Orch: 解析任务，生成计划
+    
+    Note over Orch,Res: A2A: TASK_DELEGATION
+    Orch->>Res: 委派研究任务
+    activate Res
+    
+    Note over Res,Web: A2A: TASK_DELEGATION
+    Res->>Web: 请求搜索相关资料
+    activate Web
+    Web->>MCP: 调用Web Search MCP
+    MCP-->>Web: 返回搜索结果
+    Note over Web,Res: A2A: RESULT_SHARING
+    Web-->>Res: 返回搜索结果
+    deactivate Web
+    
+    Res->>MCP: 调用Document Parser MCP
+    MCP-->>Res: 返回解析后的文档内容
+    Res->>Res: 整合信息，生成研究报告
+    
+    Note over Res,Des: A2A: RESULT_SHARING
+    Res-->>Des: 共享研究报告
+    deactivate Res
+    activate Des
+    
+    Des->>Des: 基于研究设计架构
+    Note over Des,Orch: A2A: COORDINATION
+    Des->>Orch: 请求用户审核设计
+    Orch->>User: 展示设计方案
+    User-->>Orch: 审核通过
+    Orch-->>Des: 确认继续
+    
+    Note over Des,Code: A2A: COORDINATION
+    Des->>Code: 协调开始编码
+    deactivate Des
+    activate Code
+    
+    Code->>MCP: 调用Repo Management MCP
+    MCP-->>Code: 创建项目结构
+    
+    loop 逐模块生成代码
+        Code->>Code: 生成代码模块
+        Code->>MCP: 调用Code Execution MCP
+        MCP-->>Code: 运行测试结果
+        
+        alt 测试失败
+            Code->>Ref: 请求错误分析
+            activate Ref
+            Ref->>MCP: 调用Code Analysis MCP
+            MCP-->>Ref: 返回分析结果
+            Ref->>Ref: 诊断问题，生成修复方案
+            Ref-->>Code: 返回修复建议
+            deactivate Ref
+            Code->>Code: 应用修复
+        end
+    end
+    
+    Note over Code,Orch: A2A: RESULT_SHARING
+    Code-->>Orch: 返回完整代码仓库
+    deactivate Code
+    
+    Orch->>Orch: 整合输出，生成报告
+    Orch-->>User: 交付最终成果
+    deactivate Orch
+    
+    Note over User,Code: 整个过程通过A2A协议实现多Agent协作
